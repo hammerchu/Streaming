@@ -8,6 +8,7 @@ from PIL import Image
 import numpy as np
 from daily import *
 import json 
+import cv2
 
 class DailyYOLO(EventHandler):
     def __init__(self):
@@ -15,6 +16,12 @@ class DailyYOLO(EventHandler):
         self.__client = CallClient(event_handler = self)
 
         # self.__model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+
+        self.__cap = cv2.VideoCapture(0)
+
+        # Check if the camera is opened correctly
+        if not self.__cap.isOpened():
+            print("ERROR - Failed to open camera")
         
         self.__camera = None
 
@@ -27,11 +34,11 @@ class DailyYOLO(EventHandler):
                 # "settings" : 
             }
         }
-        print(f'\n user input Pre: {self.__client.inputs()}')
-        self.__client.update_inputs(InputSettings)
-        print(f'\n self.__participate: {json.dumps(self.__participate["local"]["id"], indent=4)}\n')
-        print(f'\n user input Post: {self.__client.inputs()}')
-        print(f'\n subscription_profiles: {self.__client.subscription_profiles()}')
+        # print(f'\n user input Pre: {self.__client.inputs()}')
+        # self.__client.update_inputs(InputSettings)
+        # print(f'\n self.__participate: {json.dumps(self.__participate["local"]["id"], indent=4)}\n')
+        # print(f'\n user input Post: {self.__client.inputs()}')
+        # print(f'\n subscription_profiles: {self.__client.subscription_profiles()}')
 
 
 
@@ -42,8 +49,10 @@ class DailyYOLO(EventHandler):
         self.video_width = None
 
         '''kick off frame processing in thread'''
-        self.__thread = threading.Thread(target = self.process_frames)
-        self.__thread.start()
+        self.__thread_cam = threading.Thread(target = self.get_cam_frame)
+        self.__thread_frame = threading.Thread(target = self.process_frames)
+        self.__thread_cam.start()
+        self.__thread_frame.start()
 
     def run(self, meeting_url):
         print(f"Connecting to {meeting_url}...")
@@ -51,29 +60,31 @@ class DailyYOLO(EventHandler):
         self.__client.set_user_name("Bot147")
 
         print("Waiting for participants to join...")
-        self.__thread.join()
+        self.__thread_cam.join()
+        self.__thread_frame.join()
 
     def leave(self):
         self.__app_quit = True
-        self.__thread.join()
+        self.__thread_cam.join()
+        self.__thread_frame.join()
         self.__client.leave()
 
     def on_participant_joined(self, participant):
         print(f"Participant {participant['id']} joined, analyzing frames...")
         # self.__client.set_video_renderer(participant["id"], self.on_video_frame, video_source='camera')
-        self.__client.set_video_renderer(self.__participate["local"]["id"], self.on_video_frame, video_source='camera')
+        # self.__client.set_video_renderer(self.__participate["local"]["id"], self.on_video_frame, video_source='camera')
 
     def setup_camera(self, video_frame):
         ''' Define a daily virtual camera '''
         if not self.__camera:
-            # self.__camera = Daily.create_camera_device("camera",
-            #                                            width = 960,
-            #                                            height = 540,
-            #                                            color_format="RGB")
             self.__camera = Daily.create_camera_device("camera",
-                                                       width = int(video_frame.width),
-                                                       height = int(video_frame.height),
+                                                       width = int(video_frame.shape[1]),
+                                                       height = int(video_frame.shape[0]),
                                                        color_format="RGB")
+            # self.__camera = Daily.create_camera_device("camera",
+            #                                            width = int(video_frame.width),
+            #                                            height = int(video_frame.height),
+            #                                            color_format="RGB")
             self.__client.update_inputs({
                 "camera": {
                     "isEnabled": True,
@@ -83,13 +94,12 @@ class DailyYOLO(EventHandler):
                 }
             })
 
-    def process_frames(self):
+    def process_frames_original(self): # original from daily-example
         '''Prepare frame for the daily virtual -camera object '''
         index = 0 
         while not self.__app_quit:
             video_frame = self.__queue.get()
             image = Image.frombytes("RGBA", (video_frame.width, video_frame.height), video_frame.buffer)#.resize((960, 540))
-
             ''' Update the virtual camera if video frame has changed'''
             # if self.video_width != video_frame.width:
             #     print('Update camera setup')
@@ -114,6 +124,16 @@ class DailyYOLO(EventHandler):
             self.__camera.write_frame(pil)
             index += 1
 
+    def process_frames(self): # original from daily-example
+        '''Prepare frame for the daily virtual -camera object '''
+        index = 0 
+        while not self.__app_quit:
+            frame = self.__queue.get()
+            frame_bytes = cv2.imencode('.jpg', frame)[1].tobytes()
+    
+            self.__camera.write_frame(frame_bytes)
+            index += 1
+
     def on_video_frame(self, participant_id, video_frame):
         '''A callback to be called on every received frame'''
         # print('\nRunning on_video_frame \n')
@@ -122,6 +142,24 @@ class DailyYOLO(EventHandler):
             self.__time = time.time()
             self.setup_camera(video_frame)
             self.__queue.put(video_frame)
+
+    def get_cam_frame(self):
+
+        ret, frame = self.__cap.read()
+        isPrinted = False
+
+        # Check if the frame was successfully read
+        if not ret:
+            print("ERROR - Failed to capture frame")
+        if not isPrinted:
+            print('Frame: ', frame.shape)
+            isPrinted = True
+
+        cv2.putText(frame, "OBB", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+        
+        self.setup_camera(frame)
+        self.__queue.put(frame)
+
 
 def main():
     parser = argparse.ArgumentParser()
