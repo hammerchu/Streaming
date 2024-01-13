@@ -16,6 +16,9 @@ import cv2
 
 
 class SendImageApp:
+    '''
+    Based on send_image.py from daily-python example 
+    '''
     def __init__(self, size, framerate):
         # self.__image = Image.open(image_file)
         self.__framerate = framerate
@@ -32,18 +35,16 @@ class SendImageApp:
 
 
         self.__cap = cv2.VideoCapture(0)
+        self.__cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
         self.__cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
         self.__cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+        self.__cap.set(cv2.CAP_PROP_FPS, 60)
         ret, frame = self.__cap.read()
         if not ret:
             print("ERROR - Failed to capture frame")
 
-        # self.__camera = Daily.create_camera_device("my-camera",
-        #                                            width = self.__image.width,
-        #                                            height = self.__image.height,
-        #                                            color_format = "RGB")
         self.__camera = Daily.create_camera_device("my-camera",
-                                                   width = frame.shape[1],
+                                                   width = frame.shape[1]*3,
                                                    height = frame.shape[0],
                                                    color_format = "RGB")
 
@@ -115,7 +116,11 @@ class SendImageApp:
             return
 
         sleep_time = 1.0 / self.__framerate
-        # image_bytes = self.__image.tobytes()
+
+        # Initialize variables for FPS calculation
+        fps_start_time = time.time()
+        fps_counter = 0
+        fps = 0
 
         while not self.__app_quit:
             '''Read frame'''
@@ -123,10 +128,23 @@ class SendImageApp:
             if not ret:
                 print("ERROR - Failed to capture frame")
 
-            cv2.putText(frame, "OBB", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
-            color_converted = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            pil_image=Image.fromarray(color_converted)
+            # Calculate FPS
+            fps_counter += 1
+            if time.time() - fps_start_time >= 1:
+                fps = fps_counter / (time.time() - fps_start_time)
+                fps_counter = 0
+                fps_start_time = time.time()
 
+            
+
+            cv2.putText(frame, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            # Merge frames horizontally
+            merged_frame = cv2.hconcat([frame, frame, frame])
+
+            # pil_image=Image.fromarray(color_converted)
+            pil_image=Image.fromarray(merged_frame)
 
             self.__camera.write_frame(pil_image.tobytes())
 
