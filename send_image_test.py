@@ -16,11 +16,24 @@ import cv2
 
 
 class SendImageApp:
-    def __init__(self, image_file, framerate):
+    def __init__(self, size, framerate):
         # self.__image = Image.open(image_file)
         self.__framerate = framerate
 
+        if size.lower() == 'l':
+            w = 1920
+            h = 1080
+        elif size.lower() == 'm':
+            w = 1280
+            h = 720
+        elif size.lower() == 's':
+            w = 640
+            h = 480
+
+
         self.__cap = cv2.VideoCapture(0)
+        self.__cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+        self.__cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
         ret, frame = self.__cap.read()
         if not ret:
             print("ERROR - Failed to capture frame")
@@ -120,16 +133,16 @@ class SendImageApp:
             time.sleep(sleep_time)
 
 def main():
-    # parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser()
     # parser.add_argument("-m", "--meeting", required = True, help = "Meeting URL")
-    # parser.add_argument("-i", "--image", required = True, help = "Image to send")
-    # parser.add_argument("-f", "--framerate", type=int, required = True, help = "Framerate")
-    # args = parser.parse_args()
+    parser.add_argument("-s", "--size", required = True, help = "Size of video, L, M or S")
+    parser.add_argument("-f", "--framerate", type=int, required = True, help = "Framerate")
+    args = parser.parse_args()
 
     Daily.init()
 
     # app = SendImageApp(args.image, args.framerate)
-    app = SendImageApp('', 30)
+    app = SendImageApp(args.size, args.framerate)
 
     try :
         # app.run(args.meeting)
