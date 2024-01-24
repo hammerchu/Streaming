@@ -12,27 +12,39 @@ import threading
 from daily import *
 from PIL import Image
 import cv2
+import json
 
+from datetime import datetime
+import numpy as np
 
-
-class SendImageApp:
+class SendImageApp(EventHandler): # require EventHandler for callbacks
     '''
-    Based on send_image.py from daily-python example 
+    Based on send_image.py from daily-pfourcc = cv2.VideoWriter_fourcc(*'avc1')
+        self._video = cv2.VideoWriter("test.mp4",fourcc, 60,videodims)ython example 
     '''
-    def __init__(self, size, framerate):
+    def __init__(self, size, framerate, is_save_to_disk):
         # self.__image = Image.open(image_file)
         self.__framerate = framerate
+self._pil_image = pil_image    
+        self._pil_image = None
 
         if size.lower() == 'l':
             w = 1920
             h = 1080
+
         elif size.lower() == 'm':
             w = 1280
             h = 720
+
         elif size.lower() == 's':
             w = 640
             h = 480
 
+        self.videodims = (w*3, h)
+        print(f'Running at {self.videodims}')
+
+        fourcc = cv2.VideoWriter_fourcc('m', 'p', '4', 'v')
+        self._video = cv2.VideoWriter(f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4",fourcc, self.__framerate,self.videodims)
 
         self.__cap = cv2.VideoCapture(0)
         self.__cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
@@ -48,7 +60,7 @@ class SendImageApp:
                                                    height = frame.shape[0],
                                                    color_format = "RGB")
 
-        self.__client = CallClient()
+        self.__client = CallClient(event_handler = self) # add eventhandler here too
 
         self.__client.update_inputs({
             "camera": {
@@ -58,7 +70,7 @@ class SendImageApp:
                 }
             },
             "microphone": False
-        }, completion = self.on_inputs_updated)
+        }, completion = self.on_inputs_updated_)
 
         self.__client.update_subscription_profiles({
             "base": {
@@ -71,12 +83,21 @@ class SendImageApp:
         self.__app_error = None
         self.__app_joined = False
         self.__app_inputs_updated = False
+        self.__report_data = True
 
         self.__start_event = threading.Event()
-        self.__thread = threading.Thread(target = self.send_image);
-        self.__thread.start()
+        self.__thread_send_image = threading.Thread(target = self.send_image)
+        self.__thread_send_image.start()
+        self.__thread_send_data = threading.Thread(target = self.send_data_regularly)
+        self.__thread_send_data.start()
+        if is_save_to_disk:
+            self.__thread_record_video = threading.Thread(target = self.record_video)
+            self.__thread_record_video.start()
 
-    def on_inputs_updated(self, inputs, error):
+
+        
+
+    def on_inputs_updated_(self, inputs, error):
         if error:
             print(f"Unable to updated inputs: {error}")
             self.__app_error = error
@@ -94,11 +115,23 @@ class SendImageApp:
 
     def run(self, meeting_url):
         self.__client.join(meeting_url, completion=self.on_joined)
-        self.__thread.join()
+        self.__thread_send_image.join()
+        self.__thread_send_data.join()
+        try:
+            self.__thread_record_video.join()
+        except:
+            print('video not recording to disk')
 
     def leave(self):
         self.__app_quit = True
-        self.__thread.join()
+        
+        self.__thread_send_image.join()
+        self.__thread_send_data.join()
+        try:
+            self.__thread_record_video.join()
+        except:
+            print('video not recording to disk')
+
         self.__client.leave()
 
     def maybe_start(self):
@@ -110,9 +143,9 @@ class SendImageApp:
 
     def send_image(self):
         self.__start_event.wait()
-
+        print('send_image')
         if self.__app_error:
-            print(f"Unable to send audio!")
+            print(f"Unable to s-send audio!")
             return
 
         sleep_time = 1.0 / self.__framerate
@@ -143,24 +176,63 @@ class SendImageApp:
             # Merge frames horizontally
             merged_frame = cv2.hconcat([frame, frame, frame])
 
-            # pil_image=Image.fromarray(color_converted)
-            pil_image=Image.fromarray(merged_frame)
+            self._pil_image=Image.fromarray(merged_frame)
 
-            self.__camera.write_frame(pil_image.tobytes())
+            ''' Save test frame onto disk'''
+            # self._pil_image.save(f"{datetime.now().strftime('%Y%m%d_%H%M')}.jpg")
+
+            self.__camera.write_frame(self._pil_image.tobytes())
 
             time.sleep(sleep_time)
+    
+    def record_video(self):
+        while not self.__app_quit:
+            if self._pil_image != None:
+                # record the frame to local drive 
+                pil_img = self._pil_image
+                print('valid frame')
+            else:
+                # record a black frame
+                pil_img = Image.new('RGB', self.videodims, color = 'darkred')
+                print('empty frame')
+
+            self._video.write(cv2.cvtColor(np.array(pil_img.copy()), cv2.COLOR_RGB2BGR))
+
+            sleep_time = 1.0 / self.__framerate
+            # time.sleep(sleep_time)
+
+        self._video.release()
+
+    def on_app_message(self, message, sender_id):
+        try:
+            print('Received message: ', message['message'], ' from ', message['name'])
+        except Exception as e:
+            print(e)
+    
+    def send_message(self, message):
+        self.__client.send_app_message(message)
+        print('Sent message: ', message)
+
+    def send_data_regularly(self):
+        while not self.__app_quit:
+            if self.__report_data:
+                data = {"message": "obb-sys@example bot performance data", "timestamp": datetime.now().strftime('%m/%d/%Y, %H:%M:%S')}
+                self.send_message(json.dumps(data))
+            time.sleep(3)
+        
 
 def main():
     parser = argparse.ArgumentParser()
     # parser.add_argument("-m", "--meeting", required = True, help = "Meeting URL")
-    parser.add_argument("-s", "--size", required = True, help = "Size of video, L, M or S")
-    parser.add_argument("-f", "--framerate", type=int, required = True, help = "Framerate")
+    parser.add_argument("-si", "--size", required = True, help = "Size of video, L, M or S")
+    parser.add_argument("-fr", "--framerate", type=int, required = True, help = "Framerate, recommend 30")
+    parser.add_argument("-sv", "--save", type=int, required = True, help = "save video to disk")
     args = parser.parse_args()
 
     Daily.init()
 
     # app = SendImageApp(args.image, args.framerate)
-    app = SendImageApp(args.size, args.framerate)
+    app = SendImageApp(args.size, args.framerate, args.save)
 
     try :
         # app.run(args.meeting)
@@ -169,6 +241,7 @@ def main():
         print("Ctrl-C detected. Exiting!")
     finally:
         app.leave()
+        
 
     # Let leave finish
     time.sleep(2)
