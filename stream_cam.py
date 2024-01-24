@@ -4,7 +4,7 @@
 #
 # Usage: python3 send_image.py -m MEETING_URL -i IMAGE -f FRAME_RATE
 #
-
+import os
 import argparse
 import time
 import threading
@@ -27,6 +27,8 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
         self.__framerate = framerate
         self._pil_image = None
 
+        self.record_video_path = '/home/hammer/DEV/OBB/streaming/records'
+
         if size.lower() == 'l':
             w = 1920
             h = 1080
@@ -39,12 +41,10 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
             w = 640
             h = 480
 
-        self.videodims = (w*3, h)
+        self.videodims = (320*3, 240)
         print(f'Running at {self.videodims}')
 
-        fourcc = cv2.VideoWriter_fourcc('m', 'p', '4', 'v')
-        self._video = cv2.VideoWriter(f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4",fourcc, self.__framerate,self.videodims)
-
+        
         self.__cap = cv2.VideoCapture(0)
         self.__cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
         self.__cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
@@ -89,7 +89,17 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
         self.__thread_send_image.start()
         self.__thread_send_data = threading.Thread(target = self.send_data_regularly)
         self.__thread_send_data.start()
+
+        '''If we want to save the video to disk'''
         if is_save_to_disk:
+            # create the folder for today if its not exist yet
+            folder_today = os.path.join(self.record_video_path, datetime.now().strftime('%Y%m%d'))
+            if not os.path.exists(folder_today):
+                os.makedirs(folder_today)
+                
+            fourcc = cv2.VideoWriter_fourcc('m', 'p', '4', 'v')
+            self._video = cv2.VideoWriter(f"{os.path.join(folder_today, datetime.now().strftime('%Y%m%d_%H%M%S'))}.mp4",fourcc, self.__framerate,self.videodims)
+
             self.__thread_record_video = threading.Thread(target = self.record_video)
             self.__thread_record_video.start()
 
@@ -188,7 +198,7 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
         while not self.__app_quit:
             if self._pil_image != None:
                 # record the frame to local drive 
-                pil_img = self._pil_image
+                pil_img = self._pil_image.resize(self.videodims)
                 print('valid frame')
             else:
                 # record a black frame
