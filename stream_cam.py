@@ -25,7 +25,6 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
     def __init__(self, size, framerate, is_save_to_disk):
         # self.__image = Image.open(image_file)
         self.__framerate = framerate
-self._pil_image = pil_image    
         self._pil_image = None
 
         if size.lower() == 'l':
