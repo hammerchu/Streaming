@@ -1,4 +1,5 @@
 #
+
 #
 # Usage: python stream_cam.py -si m -fr 60 -sv 0
 #
@@ -14,6 +15,7 @@ import json
 
 from datetime import datetime
 import numpy as np
+import queue
 
 class SendImageApp(EventHandler): # require EventHandler for callbacks
     '''
@@ -21,7 +23,16 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
         self._video = cv2.VideoWriter("test.mp4",fourcc, 60,videodims)ython example 
     '''
     def __init__(self, size, framerate, is_save_to_disk):
+
+        # self.fps = 0  # Variable to store frames per second
+        # self.resolution = (0, 0)  # Variable to store frame resolution
+        self.last_fps_update = time.time()  # Variable to store the last time FPS was updated
+
+        self.read_frame_fps = 0
+
         # self.__image = Image.open(image_file)
+        self.frame_queue = queue.Queue()  
+
         self.__framerate = framerate
         self._pil_image = None
 
@@ -47,14 +58,14 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
             self.h = 480
 
         
-        self.__cap = cv2.VideoCapture(1) # v4l2-ctl --list-devices
-        self.__cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-        self.__cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.w)
-        self.__cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.h)
-        self.__cap.set(cv2.CAP_PROP_FPS, 60)
-        ret, frame = self.__cap.read()
-        if not ret:
-            print("ERROR - Failed to capture frame")
+        # self.__cap = cv2.VideoCapture(1) # v4l2-ctl --list-devices
+        # self.__cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+        # self.__cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.w)
+        # self.__cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.h)
+        # self.__cap.set(cv2.CAP_PROP_FPS, self.__framerate)
+        # ret, frame = self.__cap.read()
+        # if not ret:
+        #     print("ERROR - Failed to capture frame")
 
         self.create_camera()
         # self.__camera = Daily.create_camera_device("my-camera",
@@ -88,6 +99,8 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
         self.__report_data = True
 
         self.__start_event = threading.Event()
+        self.__thread_read_frame = threading.Thread(target = self.read_frames)
+        self.__thread_read_frame.start()
         self.__thread_send_image = threading.Thread(target = self.send_image)
         self.__thread_send_image.start()
         self.__thread_send_data = threading.Thread(target = self.send_data_regularly)
@@ -114,7 +127,40 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
                                                    width = self.w*3,
                                                    height = self.h,
                                                    color_format = "RGB")
-        
+    
+    def read_frames(self):
+
+        self.__cap = cv2.VideoCapture(1) # v4l2-ctl --list-devices
+        self.__cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+        self.__cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.w)
+        self.__cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.h)
+        # self.__cap.set(cv2.CAP_PROP_FPS, self.__framerate)
+        self.__cap.set(cv2.CAP_PROP_FPS, 30)
+
+
+
+        fps_start_time = time.time()
+        fps_counter = 0
+        fps = 0
+
+        while True:
+            ret, frame = self.__cap.read()  # Read a frame from the video capture device
+
+            # frame = cv2.resize(frame, (640, 480))
+
+            if not ret:
+                print("Error: Unable to read frame from camera")
+                break
+
+            self.frame_queue.put(frame)  # Put the frame into the frame queue
+            
+            fps_counter += 1
+            if time.time() - fps_start_time >= 1:
+                self.read_frame_fps = fps_counter / (time.time() - fps_start_time)
+                fps_counter = 0
+                fps_start_time = time.time()
+
+        self.__cap.release()
 
     def on_inputs_updated_(self, inputs, error):
         if error:
@@ -134,6 +180,7 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
 
     def run(self, meeting_url):
         self.__client.join(meeting_url, completion=self.on_joined)
+        self.__thread_read_frame.join()
         self.__thread_send_image.join()
         self.__thread_send_data.join()
         try:
@@ -143,7 +190,7 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
 
     def leave(self):
         self.__app_quit = True
-        
+        self.__thread_read_frame.join()
         self.__thread_send_image.join()
         self.__thread_send_data.join()
         try:
@@ -176,9 +223,11 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
 
         while not self.__app_quit:
             '''Read frame'''
-            ret, frame = self.__cap.read()
-            if not ret:
-                print("ERROR - Failed to capture frame")
+            # ret, frame = self.__cap.read()
+            frame = self.frame_queue.get()  # Get a frame from the frame queue
+
+            # if not ret:
+            #     print("ERROR - Failed to capture frame")
 
             # Calculate FPS
             fps_counter += 1
@@ -187,8 +236,10 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
                 fps_counter = 0
                 fps_start_time = time.time()
             
-            cv2.putText(frame, f"{self.w}x{self.h}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 200), 2, cv2.LINE_AA)
-            cv2.putText(frame, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 200), 2, cv2.LINE_AA)
+            cv2.putText(frame, f"{self.w}x{self.h}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 200), 2, cv2.LINE_AA)
+            cv2.putText(frame, f"DY FPS: {fps:.2f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 200), 2, cv2.LINE_AA)
+            cv2.putText(frame, f"RF FPS: {self.read_frame_fps:.2f}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 200), 2, cv2.LINE_AA)
+
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
             # Merge frames horizontally
@@ -246,18 +297,6 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
         '''
         print('updating video res: ', new_res)
 
-        # if new_res == 'l':
-        #     self.w = 1920
-        #     self.h = 1080
-        # elif new_res == 'm':
-        #     self.w = 1280
-        #     self.h = 720
-        # elif new_res == 's':
-        #     self.w = 640
-        #     self.h = 480
-        # else:
-        #     self.w = 320
-        #     self.h = 240
         if new_res == 'l':
             self.video_quality = "high"
         elif new_res == 'm':
