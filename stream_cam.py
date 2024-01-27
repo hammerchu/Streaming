@@ -1,8 +1,6 @@
 #
-# This demo will join a Daily meeting and send a given image at the specified
-# framerate using a virtual camera device.
 #
-# Usage: python3 send_image.py -m MEETING_URL -i IMAGE -f FRAME_RATE
+# Usage: python stream_cam.py -si m -fr 60 -sv 0
 #
 import os
 import argparse
@@ -29,35 +27,40 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
 
         self.record_video_path = '/home/hammer/DEV/OBB/streaming/records'
 
+        self.video_quality = "low"
+
+        self.video_record_dims = (640*3, 480) # fix video width for recording
+
         if size.lower() == 'l':
-            w = 1920
-            h = 1080
+            self.w = 1920
+            self.h = 1080
 
         elif size.lower() == 'm':
-            w = 1280
-            h = 720
+            self.w = 1280
+            self.h = 720
 
         elif size.lower() == 's':
-            w = 640
-            h = 480
-
-        self.videodims = (320*3, 240)
-        print(f'Running at {self.videodims}')
+            self.w = 640
+            self.h = 480
+        else:
+            self.w = 640
+            self.h = 480
 
         
-        self.__cap = cv2.VideoCapture(0)
+        self.__cap = cv2.VideoCapture(1) # v4l2-ctl --list-devices
         self.__cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-        self.__cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
-        self.__cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+        self.__cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.w)
+        self.__cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.h)
         self.__cap.set(cv2.CAP_PROP_FPS, 60)
         ret, frame = self.__cap.read()
         if not ret:
             print("ERROR - Failed to capture frame")
 
-        self.__camera = Daily.create_camera_device("my-camera",
-                                                   width = frame.shape[1]*3,
-                                                   height = frame.shape[0],
-                                                   color_format = "RGB")
+        self.create_camera()
+        # self.__camera = Daily.create_camera_device("my-camera",
+        #                                            width = frame.shape[1]*3,
+        #                                            height = frame.shape[0],
+        #                                            color_format = "RGB")
 
         self.__client = CallClient(event_handler = self) # add eventhandler here too
 
@@ -92,6 +95,9 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
 
         '''If we want to save the video to disk'''
         if is_save_to_disk:
+            
+            print(f'Recording at {self.video_record_dims}')
+
             # create the folder for today if its not exist yet
             folder_today = os.path.join(self.record_video_path, datetime.now().strftime('%Y%m%d'))
             if not os.path.exists(folder_today):
@@ -103,7 +109,11 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
             self.__thread_record_video = threading.Thread(target = self.record_video)
             self.__thread_record_video.start()
 
-
+    def create_camera(self):
+        self.__camera = Daily.create_camera_device("my-camera",
+                                                   width = self.w*3,
+                                                   height = self.h,
+                                                   color_format = "RGB")
         
 
     def on_inputs_updated_(self, inputs, error):
@@ -176,16 +186,17 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
                 fps = fps_counter / (time.time() - fps_start_time)
                 fps_counter = 0
                 fps_start_time = time.time()
-
             
-
-            cv2.putText(frame, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+            cv2.putText(frame, f"{self.w}x{self.h}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 200), 2, cv2.LINE_AA)
+            cv2.putText(frame, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 200), 2, cv2.LINE_AA)
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
             # Merge frames horizontally
             merged_frame = cv2.hconcat([frame, frame, frame])
 
-            self._pil_image=Image.fromarray(merged_frame)
+            # self._pil_image=Image.fromarray(merged_frame)
+            print(f'w {self.w} : h {self.h}')
+            self._pil_image=Image.fromarray(merged_frame).resize((self.w*3, self.h))
 
             ''' Save test frame onto disk'''
             # self._pil_image.save(f"{datetime.now().strftime('%Y%m%d_%H%M')}.jpg")
@@ -207,7 +218,7 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
 
             self._video.write(cv2.cvtColor(np.array(pil_img.copy()), cv2.COLOR_RGB2BGR))
 
-            sleep_time = 1.0 / self.__framerate
+            # sleep_time = 1.0 / self.__framerate
             # time.sleep(sleep_time)
 
         self._video.release()
@@ -215,8 +226,69 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
     def on_app_message(self, message, sender_id):
         try:
             print('Received message: ', message['message'], ' from ', message['name'])
+
+            '''
+            TBA
+            '''
+            if 'size@l' in message['message']:
+                self.update_video_res('l')
+            elif 'size@m' in message['message']:
+                self.update_video_res('m')
+            elif 'size@s' in message['message']:
+                self.update_video_res('s')
+
         except Exception as e:
             print(e)
+    
+    def update_video_res(self, new_res:str):
+        '''
+        Dynamically update the video res
+        '''
+        print('updating video res: ', new_res)
+
+        # if new_res == 'l':
+        #     self.w = 1920
+        #     self.h = 1080
+        # elif new_res == 'm':
+        #     self.w = 1280
+        #     self.h = 720
+        # elif new_res == 's':
+        #     self.w = 640
+        #     self.h = 480
+        # else:
+        #     self.w = 320
+        #     self.h = 240
+        if new_res == 'l':
+            self.video_quality = "high"
+        elif new_res == 'm':
+            self.video_quality = "medium"
+        elif new_res == 's':
+            self.video_quality = "low"
+
+        
+        self.__client.update_publishing(
+            {
+                "camera": {
+                    "isPublishing": True,
+                    "sendSettings": {
+                        "maxQuality" : self.video_quality
+                    }
+                },
+                "microphone": False
+
+
+            },completion=None)
+
+        # self.__client.update_inputs({
+        #     "camera": {
+        #         "isEnabled": True,
+        #         "settings": {
+        #             "width": self.w,
+        #             "height": self.h
+        #         }
+        #     },
+        #     "microphone": False
+        # }, completion = self.on_inputs_updated_)
     
     def send_message(self, message):
         self.__client.send_app_message(message)
@@ -227,7 +299,7 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
             if self.__report_data:
                 data = {"message": "obb-sys@example bot performance data", "timestamp": datetime.now().strftime('%m/%d/%Y, %H:%M:%S')}
                 self.send_message(json.dumps(data))
-            time.sleep(3)
+            time.sleep(5000)
         
 
 def main():
