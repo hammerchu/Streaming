@@ -17,6 +17,8 @@ from datetime import datetime
 import numpy as np
 import queue
 
+import logging
+
 class SendImageApp(EventHandler): # require EventHandler for callbacks
     '''
     Based on send_image.py from daily-pfourcc = cv2.VideoWriter_fourcc(*'avc1')
@@ -24,13 +26,10 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
     '''
     def __init__(self, size, framerate, is_save_to_disk):
 
-        # self.fps = 0  # Variable to store frames per second
-        # self.resolution = (0, 0)  # Variable to store frame resolution
         self.last_fps_update = time.time()  # Variable to store the last time FPS was updated
 
         self.read_frame_fps = 0
 
-        # self.__image = Image.open(image_file)
         self.frame_queue = queue.Queue()  
 
         self.__framerate = framerate
@@ -57,21 +56,7 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
             self.w = 640
             self.h = 480
 
-        
-        # self.__cap = cv2.VideoCapture(1) # v4l2-ctl --list-devices
-        # self.__cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-        # self.__cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.w)
-        # self.__cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.h)
-        # self.__cap.set(cv2.CAP_PROP_FPS, self.__framerate)
-        # ret, frame = self.__cap.read()
-        # if not ret:
-        #     print("ERROR - Failed to capture frame")
-
-        self.create_camera()
-        # self.__camera = Daily.create_camera_device("my-camera",
-        #                                            width = frame.shape[1]*3,
-        #                                            height = frame.shape[0],
-        #                                            color_format = "RGB")
+        self.create_camera() # create the daily camera obj
 
         self.__client = CallClient(event_handler = self) # add eventhandler here too
 
@@ -109,7 +94,7 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
         '''If we want to save the video to disk'''
         if is_save_to_disk:
             
-            print(f'Recording at {self.video_record_dims}')
+            logging.info(f'Recording at {self.video_record_dims}')
 
             # create the folder for today if its not exist yet
             folder_today = os.path.join(self.record_video_path, datetime.now().strftime('%Y%m%d'))
@@ -123,10 +108,13 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
             self.__thread_record_video.start()
 
     def create_camera(self):
-        self.__camera = Daily.create_camera_device("my-camera",
+        try:
+            self.__camera = Daily.create_camera_device("my-camera",
                                                    width = self.w*3,
                                                    height = self.h,
                                                    color_format = "RGB")
+        except Exception as e:
+            logging.error('Unable to cearte daily camera')
     
     def read_frames(self):
 
@@ -134,22 +122,16 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
         self.__cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
         self.__cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.w)
         self.__cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.h)
-        # self.__cap.set(cv2.CAP_PROP_FPS, self.__framerate)
         self.__cap.set(cv2.CAP_PROP_FPS, 30)
 
-
-
-        fps_start_time = time.time()
+        fps_start_time = time.time() # for read frame performance fps 
         fps_counter = 0
-        fps = 0
 
         while True:
             ret, frame = self.__cap.read()  # Read a frame from the video capture device
 
-            # frame = cv2.resize(frame, (640, 480))
-
             if not ret:
-                print("Error: Unable to read frame from camera")
+                logging.error("Unable to read frame from camera")
                 break
 
             self.frame_queue.put(frame)  # Put the frame into the frame queue
@@ -164,7 +146,7 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
 
     def on_inputs_updated_(self, inputs, error):
         if error:
-            print(f"Unable to updated inputs: {error}")
+            logging.error(f"Unable to updated inputs: {error}")
             self.__app_error = error
         else:
             self.__app_inputs_updated = True
@@ -172,7 +154,7 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
 
     def on_joined(self, data, error):
         if error:
-            print(f"Unable to join meeting: {error}")
+            logging.error(f"Unable to join meeting: {error}")
             self.__app_error = error
         else:
             self.__app_joined = True
@@ -186,7 +168,7 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
         try:
             self.__thread_record_video.join()
         except:
-            print('video not recording to disk')
+            logging.debug('video not recording to disk')
 
     def leave(self):
         self.__app_quit = True
@@ -196,7 +178,7 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
         try:
             self.__thread_record_video.join()
         except:
-            print('video not recording to disk')
+            logging.debug('video not recording to disk')
 
         self.__client.leave()
 
@@ -209,9 +191,9 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
 
     def send_image(self):
         self.__start_event.wait()
-        print('send_image')
+        logging.debug('send_image')
         if self.__app_error:
-            print(f"Unable to s-send audio!")
+            logging.error(f"Unable to s-send audio!")
             return
 
         sleep_time = 1.0 / self.__framerate
@@ -223,11 +205,7 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
 
         while not self.__app_quit:
             '''Read frame'''
-            # ret, frame = self.__cap.read()
             frame = self.frame_queue.get()  # Get a frame from the frame queue
-
-            # if not ret:
-            #     print("ERROR - Failed to capture frame")
 
             # Calculate FPS
             fps_counter += 1
@@ -245,8 +223,7 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
             # Merge frames horizontally
             merged_frame = cv2.hconcat([frame, frame, frame])
 
-            # self._pil_image=Image.fromarray(merged_frame)
-            print(f'w {self.w} : h {self.h}')
+            # logging.debug(f'w {self.w} : h {self.h}')
             self._pil_image=Image.fromarray(merged_frame).resize((self.w*3, self.h))
 
             ''' Save test frame onto disk'''
@@ -261,41 +238,38 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
             if self._pil_image != None:
                 # record the frame to local drive 
                 pil_img = self._pil_image.resize(self.videodims)
-                print('valid frame')
+                logging.debug('valid frame')
             else:
                 # record a black frame
                 pil_img = Image.new('RGB', self.videodims, color = 'darkred')
-                print('empty frame')
+                logging.debug('empty frame')
 
             self._video.write(cv2.cvtColor(np.array(pil_img.copy()), cv2.COLOR_RGB2BGR))
-
-            # sleep_time = 1.0 / self.__framerate
-            # time.sleep(sleep_time)
 
         self._video.release()
 
     def on_app_message(self, message, sender_id):
         try:
-            print('Received message: ', message['message'], ' from ', message['name'])
+            logging.info('Received message: ', message['message'], ' from ', message['name'])
 
             '''
-            TBA
+            Update stream quality by receiving command from HUBS
             '''
             if 'size@l' in message['message']:
-                self.update_video_res('l')
+                self.update_video_quality('l')
             elif 'size@m' in message['message']:
-                self.update_video_res('m')
+                self.update_video_quality('m')
             elif 'size@s' in message['message']:
-                self.update_video_res('s')
+                self.update_video_quality('s')
 
         except Exception as e:
-            print(e)
+            logging.error(e)
     
-    def update_video_res(self, new_res:str):
+    def update_video_quality(self, new_res:str):
         '''
-        Dynamically update the video res
+        Dynamically update the video max quality
         '''
-        print('updating video res: ', new_res)
+        logging.info('INFO: Updating video res: ', new_res)
 
         if new_res == 'l':
             self.video_quality = "high"
@@ -331,7 +305,7 @@ class SendImageApp(EventHandler): # require EventHandler for callbacks
     
     def send_message(self, message):
         self.__client.send_app_message(message)
-        print('Sent message: ', message)
+        logging.info('Sent message: ', message)
 
     def send_data_regularly(self):
         while not self.__app_quit:
@@ -358,7 +332,7 @@ def main():
         # app.run(args.meeting)
         app.run('https://onbotbot.daily.co/_test')
     except KeyboardInterrupt:
-        print("Ctrl-C detected. Exiting!")
+        logging.info("Ctrl-C detected. Exiting!")
     finally:
         app.leave()
         
